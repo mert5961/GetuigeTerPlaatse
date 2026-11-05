@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SceneWitness: question the witness</title>
+<style>
+  :root { --bg:#0f1115; --panel:#171a21; --line:#262b36; --text:#e6e8ee; --dim:#8a93a6; --blue:#4c8dff; --ok:#3ecf8e; --miss:#ff6b6b; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:15px/1.5 system-ui, -apple-system, sans-serif; background:var(--bg); color:var(--text); height:100vh; display:grid; grid-template-rows:auto 1fr; }
+  header { padding:14px 20px; border-bottom:1px solid var(--line); display:flex; gap:16px; align-items:baseline; flex-wrap:wrap; }
+  header h1 { font-size:17px; margin:0; }
+  header p { margin:0; color:var(--dim); font-size:13px; }
+  main { display:grid; grid-template-columns:1.3fr 1fr; min-height:0; }
+  section { display:flex; flex-direction:column; min-height:0; border-right:1px solid var(--line); }
+  #log { flex:1; overflow:auto; padding:18px 20px; display:flex; flex-direction:column; gap:12px; }
+  .msg { max-width:80%; padding:10px 14px; border-radius:12px; cursor:default; }
+  .officer { align-self:flex-end; background:var(--blue); color:white; }
+  .witness { align-self:flex-start; background:var(--panel); border:1px solid var(--line); cursor:pointer; }
+  .witness.active { outline:2px solid var(--blue); }
+  .meta { font-size:12px; color:var(--dim); margin-top:4px; }
+  .brief { color:var(--dim); font-size:14px; background:var(--panel); border:1px dashed var(--line); padding:12px 14px; border-radius:10px; }
+  form { display:flex; gap:8px; padding:14px 20px; border-top:1px solid var(--line); }
+  input { flex:1; padding:11px 14px; border-radius:10px; border:1px solid var(--line); background:var(--panel); color:var(--text); font:inherit; }
+  button { padding:10px 16px; border-radius:10px; border:0; background:var(--blue); color:white; font:inherit; cursor:pointer; }
+  button.secondary { background:transparent; border:1px solid var(--line); color:var(--text); }
+  button:disabled { opacity:.5; cursor:wait; }
+  aside { overflow:auto; padding:18px 20px; }
+  aside h2 { font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:var(--dim); margin:0 0 10px; }
+  .src { border:1px solid var(--line); border-radius:10px; padding:10px 12px; margin-bottom:8px; background:var(--panel); }
+  .src.used { border-color:var(--ok); }
+  .src .id { font-weight:600; font-size:12px; color:var(--dim); }
+  .bar { height:4px; background:var(--line); border-radius:2px; margin-top:6px; }
+  .bar i { display:block; height:100%; background:var(--blue); border-radius:2px; }
+  .item { display:flex; gap:10px; padding:8px 0; border-bottom:1px solid var(--line); font-size:14px; }
+  .item b { width:18px; flex:none; }
+  .ok { color:var(--ok); } .miss { color:var(--miss); }
+  .score { font-size:32px; font-weight:700; margin:4px 0 12px; }
+  ul { padding-left:18px; margin:6px 0 16px; }
+  .hint { color:var(--dim); font-size:13px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>SceneWitness</h1>
+  <p>A fictional training scene: you are the first officer on the landing. Question the neighbour, then ask for a debrief.</p>
+  <p id="info"></p>
+</header>
+<main>
+  <section>
+    <div id="log">
+      <div class="brief"><b>Briefing.</b> 22:55, Amsterdam-Noord. A resident of flat 3A was found injured after a break-in;
+        the ambulance is with him. His neighbour, Anouk Visser (67), called 112. She is waiting on the third-floor landing.
+        She only answers what you ask, so ask well.</div>
+    </div>
+    <form id="ask">
+      <input id="q" placeholder="Ask the witness, e.g. &quot;Can you tell me what happened?&quot;" autocomplete="off" autofocus>
+      <button id="send">Ask</button>
+      <button type="button" class="secondary" id="end">End &amp; debrief</button>
+    </form>
+  </section>
+  <aside id="side">
+    <h2>Why she said that</h2>
+    <p class="hint">Click one of her answers to see the memories retrieved for it (RAG). Green = the memories she actually used.
+      She cannot say anything that is not in her case file.</p>
+  </aside>
+</main>
+<script>
+const history = [];
+const log = document.getElementById('log'), side = document.getElementById('side');
+const $q = document.getElementById('q'), $send = document.getElementById('send'), $end = document.getElementById('end');
+const esc = s => s.replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+fetch('/api/info').then(r => r.json()).then(i =>
+  document.getElementById('info').textContent = `Local models: ${i.chat_model} + ${i.embed_model} · ${i.memories} memories`);
+
+function bubble(role, html) {
+  const d = document.createElement('div');
+  d.className = 'msg ' + role; d.innerHTML = html;
+  log.appendChild(d); log.scrollTop = log.scrollHeight; return d;
+}
+
+function showSources(r, el) {
+  document.querySelectorAll('.witness.active').forEach(e => e.classList.remove('active'));
+  el.classList.add('active');
+  side.innerHTML = `<h2>Why she said that</h2><p class="hint">Top ${r.retrieved.length} memories by cosine similarity to your question.
+    ${r.retries ? `The guardrail rejected ${r.retries} answer(s) that cited memories she was not given.` : ''}</p>` +
+    r.retrieved.map(s => `<div class="src ${r.used_memories.includes(s.id) ? 'used' : ''}">
+      <div class="id">${s.id} · similarity ${s.score.toFixed(2)} ${r.used_memories.includes(s.id) ? '· used' : ''}</div>
+      ${esc(s.text)}<div class="bar"><i style="width:${Math.max(0, s.score) * 100}%"></i></div></div>`).join('');
+}
+
+function busy(b) { $send.disabled = $end.disabled = $q.disabled = b; }
+
+document.getElementById('ask').onsubmit = async e => {
+  e.preventDefault();
+  const question = $q.value.trim(); if (!question) return;
+  $q.value = ''; bubble('officer', esc(question)); busy(true);
+  const wait = bubble('witness', '<span class="meta">…</span>');
+  try {
+    const r = await (await fetch('/api/ask', { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ history, question }) })).json();
+    history.push({ role:'officer', text:question }, { role:'witness', text:r.reply, memories:r.used_memories });
+    wait.innerHTML = `${esc(r.reply)}<div class="meta">${r.mood} · ${r.used_memories.join(', ') || 'no memory used'}</div>`;
+    wait.onclick = () => showSources(r, wait); showSources(r, wait);
+  } catch (err) { wait.innerHTML = `<span class="miss">Error: ${esc(String(err))}</span>`; }
+  busy(false); $q.focus();
+};
+
+$end.onclick = async () => {
+  if (!history.length) return;
+  busy(true); side.innerHTML = '<h2>Debrief</h2><p class="hint">The trainer is reading your questions…</p>';
+  const d = await (await fetch('/api/debrief', { method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ history }) })).json();
+  side.innerHTML = `<h2>Debrief</h2><div class="score">${d.score}</div>
+    <p class="hint">Checklist items covered (an illustrative checklist, not real police procedure).</p>
+    ${d.items.map(i => `<div class="item"><b class="${i.covered ? 'ok' : 'miss'}">${i.covered ? '✓' : '✗'}</b>
+      <div>${esc(d.checklist[i.id])}${i.evidence ? `<div class="meta">“${esc(i.evidence)}”</div>` : ''}</div></div>`).join('')}
+    <h2 style="margin-top:18px">Strengths</h2><ul>${d.strengths.map(s => `<li>${esc(s)}</li>`).join('')}</ul>
+    <h2>Next time</h2><ul>${d.advice.map(s => `<li>${esc(s)}</li>`).join('')}</ul>
+    <h2>What she knew but you never asked (${d.never_unlocked.length})</h2>
+    ${d.never_unlocked.map(s => `<div class="src"><div class="id">${s.id}</div>${esc(s.text)}</div>`).join('')}`;
+  busy(false);
+};
+</script>
+</body>
+</html>
