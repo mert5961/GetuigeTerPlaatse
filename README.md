@@ -23,7 +23,7 @@ invent facts. This prototype explores the middle: **free conversation, grounded 
 ## How it works
 
 ```mermaid
-flowchart LR
+flowchart TD
     subgraph Knowledge
         CF["case_file.md<br/>22 memories, W01-W22"]
         CL["checklist.md<br/>13 items, C01-C13"]
