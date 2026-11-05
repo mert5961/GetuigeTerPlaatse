@@ -13,7 +13,7 @@ from witness.llm import CHAT_MODEL, EMBED_MODEL
 from witness.models import ChatRequest, ChatResponse, DebriefRequest, DebriefResponse
 from witness.witness import Witness
 
-app = FastAPI(title="SceneWitness")
+app = FastAPI(title="Getuige ter Plaatse")
 witness = Witness()  # builds the vector index once at startup
 STATIC = Path(__file__).parent / "static"
 
